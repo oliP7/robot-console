@@ -41,3 +41,17 @@ services:
       WEB_URL: http://web:8080
       TOKEN_FILE: /run/robot-console-secrets/api.token
     command: ["pytest", "-q", "-s", "-p", "no:cacheprovider", "tests/integration"]
+
+  e2e:
+    profiles: [test]
+    build: { context: ., dockerfile: tests/e2e/Dockerfile }
+    image: robot-console/e2e:local
+    depends_on:
+      web: { condition: service_healthy }
+    # Chromium uses /dev/shm heavily; the Docker default of 64 MB can crash it.
+    shm_size: 1gb
+    volumes:
+      - secrets:/run/robot-console-secrets:ro
+    environment:
+      WEB_URL: http://web:8080
+      TOKEN_FILE: /run/robot-console-secrets/api.token

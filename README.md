@@ -87,7 +87,7 @@ broker/      Mosquitto config + ACL, secret generator (init container)
 backend/     FastAPI: MQTT ingest, in-memory state, WebSocket hub, REST commands
 frontend/    React + TS (Vite), own windowing, external store; nginx config
 robot/       robot.py as provided (unmodified) + its image (paho-mqtt 1.6.1)
-tests/       integration tests (run in compose against the real stack)
+tests/       integration and browser (Playwright) tests, run in compose against the real stack
 tools/       robot_sim.py (many robots per connection), loadtest.py
 docs/        DESIGN.md: production design on AWS and scale strategy```
 
@@ -170,6 +170,7 @@ through one registered handler.
 | Backend unit (pytest) | RobotRegistry: counters vs a brute-force oracle under random traffic, offline sweep, back online, forget, index diffs (including add/forget in one window), invalid input, capacity guard. Hub: viewport filtering, coalescing (latest wins), full index then diffs, slow client dropped without blocking others and with bounded pending, leading-edge flush. API: auth, every non-public route requires the token, WebSocket auth and origin, allowlist, content type, 404/409/422/429/503 (no internal error text), docs switch, ingest topic/payload validation. Config: env parsing, secrets from files, validation, defaults in one place. | 68 |
 | Frontend lint + unit (ESLint, vitest) | Lint: folder boundaries, no barrels, no import cycles, React hooks rules. Store: index full/diffs/idempotence/large diffs, filter, watched-only retention and eviction, per-row notifications, rAF batching, reference-stable snapshots, pending lifecycle (no optimistic state, confirm before 202, timeout, failure, stays watched while pending). Connection: auth first, view after hello, reconnect with backoff, stale detection, 4401 stops retries, garbage frames. Backoff jitter, confirmation rules. | 47 |
 | Integration (pytest, real stack) | Real `robot.py` containers, Mosquitto, backend, nginx, auth on. Two WebSocket clients watch a robot; a command is sent via REST; **both** clients must observe the robot report the new state; latency is printed. Run directly against the backend **and through nginx**, for `set_mode` and `toggle_charge`. Also: 401 without/with wrong token, WebSocket 4401, cross-origin WebSocket rejected (403) via nginx, security headers, `/metrics` not exposed via nginx, 404/422. | 7 |
+| Browser end-to-end (Playwright, Chromium, real stack) | The real web client through nginx, auth on. Two independent browser contexts sign in; in one, an operator clicks a mode button on a robot's row; **both** browsers must show the mode the robot reports, the sender's "Waiting for robot" line must clear, the backend must report the new mode, and no uncaught page errors may occur. | 1 |
 
 Sample integration output (this machine, final run):
 
@@ -178,6 +179,7 @@ Sample integration output (this machine, final run):
 [backend direct] toggle_charge from discharging: both clients saw it after 57 ms
 [through nginx] set_mode=error: both clients saw the robot report it after 96 ms
 [through nginx] toggle_charge from charging: both clients saw it after 52 ms
+[browser] clicked set_mode=idle on r-3469d8: both browsers showed it after 123 ms
 ```
 
 Single samples vary with where the command lands in the 50 ms flush window.
@@ -266,8 +268,6 @@ shared token with OIDC and roles
   client infers confirmation from the new state.
 - **Single backend instance**, no HA. Scaling path:
   [DESIGN.md, Appendix A](docs/DESIGN.md#a-scale-strategy-100-to-5000-robots-vs-5000-to-50000-robots).
-- **The integration test drives the client's API (REST + WebSocket), not a
-  real browser.** The UI was checked manually in two tabs.
 
 ## History: how to add it without rebuilding
 
@@ -284,10 +284,11 @@ version: [DESIGN.md, Appendix B](docs/DESIGN.md#b-adding-history-without-rebuild
 ## Given another day
 
 1. History (above), behind a feature flag.
-2. Playwright end-to-end test of the real UI: two browsers, click, assert.
-3. OIDC sign-in and roles; WebSocket ticket instead of a raw token.
-4. Ask the robot team for a protocol change: echo the command id in
+2. OIDC sign-in and roles; WebSocket ticket instead of a raw token.
+3. Ask the robot team for a protocol change: echo the command id in
    telemetry, add an LWT and a heartbeat. Then remove the inference heuristics.
-5. Server-side paging and filtering of the robot index.
+4. Server-side paging and filtering of the robot index.
+5. More browser tests (`toggle_charge`, `kick`, offline robot, reconnect after a
+   backend restart) and a Firefox and WebKit run.
 6. Load test on a Linux host with production-sized CPU limits, plus a broker
    test with real per-robot connections.
