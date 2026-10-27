@@ -1,0 +1,14 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.playwright-cli/
+.env
+*.pw
+*.token
+
+# Local IDE / OS files
+.idea/
+.DS_Store

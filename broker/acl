@@ -1,0 +1,8 @@
+# Rules before the first "user" line apply to anonymous clients (robots).
+topic write robots/+/telemetry
+topic read robots/+/cmd
+
+# The backend bridge: reads all telemetry, publishes commands.
+user backend
+topic read robots/+/telemetry
+topic write robots/+/cmd

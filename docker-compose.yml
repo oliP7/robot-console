@@ -1,0 +1,101 @@
+# Robot Console: local stack. One command: `docker compose up --build` (or `make up`).
+#
+#   secrets-init  generates the broker password and API token into a named volume
+#   broker        Mosquitto (anonymous robots, authenticated backend, ACL enforced)
+#   backend       FastAPI: MQTT -> state -> WebSocket, REST commands -> MQTT
+#   web           nginx: static React app, proxies /api and /ws, security headers
+#   robot         the provided robot.py, unmodified, 3 replicas
+#
+# Host ports are bound to 127.0.0.1 only: 8080 (UI) and 1883 (so extra robot.py
+# processes can be started on the host). The backend port is not published.
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  secrets-init:
+    build: ./broker
+    image: robot-console/broker:local
+    # Runs once as root only to chown the generated files to the service uids.
+    user: "0:0"
+    entrypoint: ["init-secrets.sh"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - secrets:/secrets
+    restart: "no"
+
+  broker:
+    image: robot-console/broker:local
+    <<: *hardening
+    depends_on:
+      secrets-init: { condition: service_completed_successfully }
+    volumes:
+      - secrets:/mosquitto/secrets:ro
+    ports:
+      - "127.0.0.1:${MQTT_HOST_PORT:-1883}:1883"
+    healthcheck:
+      # Connect and publish to a topic the ACL denies: exit 0 proves the broker
+      # accepts connections, and nothing reaches subscribers.
+      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-p", "1883", "-t", "health/ping", "-m", "1", "-q", "0"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: { context: ./backend, target: runtime }
+    image: robot-console/backend:local
+    <<: *hardening
+    tmpfs: [/tmp]
+    depends_on:
+      broker: { condition: service_healthy }
+    volumes:
+      - secrets:/run/robot-console-secrets:ro
+    environment:
+      MQTT_HOST: broker
+      MQTT_PORT: "1883"
+      MQTT_USERNAME: backend
+      MQTT_PASSWORD_FILE: /run/robot-console-secrets/mqtt-backend.pw
+      # Auth is OFF by default for local development. To enable it:
+      #   AUTH_TOKEN_FILE=/run/robot-console-secrets/api.token docker compose up
+      # and read the token with `make token`.
+      AUTH_TOKEN_FILE: ${AUTH_TOKEN_FILE:-}
+      OFFLINE_AFTER: ${OFFLINE_AFTER:-6}
+      FORGET_AFTER: ${FORGET_AFTER:-600}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    expose: ["8000"]
+
+  web:
+    build: { context: ./frontend, target: web }
+    image: robot-console/web:local
+    <<: *hardening
+    tmpfs: [/tmp]
+    depends_on:
+      backend: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  robot:
+    build: ./robot
+    image: robot-console/robot:local
+    <<: *hardening
+    depends_on:
+      broker: { condition: service_healthy }
+    command: ["--broker", "tcp://broker:1883"]
+    deploy:
+      replicas: ${ROBOTS:-3}
+
+volumes:
+  secrets:

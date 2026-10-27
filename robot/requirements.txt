@@ -1,0 +1,2 @@
+# robot.py uses the paho-mqtt 1.x Client constructor, so it must stay on 1.x.
+paho-mqtt==1.6.1

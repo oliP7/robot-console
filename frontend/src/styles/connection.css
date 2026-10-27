@@ -1,0 +1,11 @@
+/* ---- connection badge ---------------------------------------------------- */
+.conn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 12px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--offline); }
+.conn-live .conn-dot { background: var(--working); box-shadow: 0 0 0 3px color-mix(in srgb, var(--working) 25%, transparent); }
+.conn-stale .conn-dot, .conn-reconnecting .conn-dot, .conn-connecting .conn-dot { background: var(--mid); }
+.conn-unauthorized .conn-dot { background: var(--error); }
+

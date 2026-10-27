@@ -1,0 +1,14 @@
+# Debug overlay: `make debug`. Same stack, but the backend runs under debugpy.
+#   - attach a debugger to 127.0.0.1:5678 (VS Code: "Backend: attach (make debug)")
+#   - backend/app is mounted read-only, so breakpoints match your local files;
+#     after editing code, `docker compose -p robot-console restart backend`
+# Do not use outside a developer machine: the debug port allows code execution.
+services:
+  backend:
+    build: { context: ./backend, target: debug }
+    image: robot-console/backend-debug:local
+    ports: ["127.0.0.1:5678:5678"]
+    volumes:
+      - ./backend/app:/srv/app:ro
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}

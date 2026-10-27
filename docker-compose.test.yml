@@ -1,0 +1,43 @@
+# Test overlay: `make test`, or
+#   docker compose -p robot-console-test -f docker-compose.yml -f docker-compose.test.yml ...
+# Runs isolated from a dev stack (own project name, no host ports) and turns
+# authentication ON, so the auth path is exercised end to end.
+
+services:
+  broker:
+    ports: !reset []
+
+  web:
+    ports: !reset []
+
+  backend:
+    environment:
+      AUTH_TOKEN_FILE: /run/robot-console-secrets/api.token
+
+  backend-unit:
+    profiles: [test]
+    build: { context: ./backend, target: test }
+    image: robot-console/backend-test:local
+    read_only: true
+    tmpfs: [/tmp]
+    network_mode: none
+
+  frontend-unit:
+    profiles: [test]
+    build: { context: ./frontend, target: test }
+    image: robot-console/web-test:local
+    network_mode: none
+
+  integration:
+    profiles: [test]
+    build: { context: ., dockerfile: tests/integration/Dockerfile }
+    image: robot-console/tester:local
+    depends_on:
+      web: { condition: service_healthy }
+    volumes:
+      - secrets:/run/robot-console-secrets:ro
+    environment:
+      BACKEND_URL: http://backend:8000
+      WEB_URL: http://web:8080
+      TOKEN_FILE: /run/robot-console-secrets/api.token
+    command: ["pytest", "-q", "-s", "-p", "no:cacheprovider", "tests/integration"]

@@ -1,0 +1,12 @@
+/* ---- token gate ---------------------------------------------------------------- */
+.gate { display: grid; place-items: center; min-height: 100%; padding: 16px; }
+.gate-card {
+  width: min(380px, 100%); display: grid; gap: 10px; padding: 24px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.gate-card h1 { margin: 0; font-size: 20px; }
+.gate-card p { margin: 0; color: var(--ink-2); }
+.gate-card label { font-size: 13px; font-weight: 600; }
+.gate-card input { padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); }
+.gate-error { color: var(--error) !important; }
+

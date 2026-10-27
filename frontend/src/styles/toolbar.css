@@ -1,0 +1,9 @@
+/* ---- toolbar ---------------------------------------------------------------- */
+.toolbar { display: flex; align-items: center; gap: 12px; }
+.search { flex: 1; max-width: 380px; }
+.search input {
+  width: 100%; padding: 9px 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel);
+}
+.count { color: var(--ink-3); font-size: 13px; font-family: var(--mono); }
+

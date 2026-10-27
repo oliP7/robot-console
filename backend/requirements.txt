@@ -1,0 +1,5 @@
+# Pinned. fastapi is held at a release that has been public for over two weeks.
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+paho-mqtt==2.1.0
+orjson==3.13.0

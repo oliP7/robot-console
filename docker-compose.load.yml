@@ -1,0 +1,19 @@
+# Load overlay: `make load`. Isolated project, no host ports, auth off (the
+# benchmark measures the data path, not auth), fast forgetting between stages.
+services:
+  broker:
+    ports: !reset []
+  web:
+    ports: !reset []
+  backend:
+    environment:
+      FORGET_AFTER: "15"
+  loadtest:
+    profiles: [load]
+    build: { context: ., dockerfile: tests/integration/Dockerfile }
+    image: robot-console/tester:local
+    depends_on:
+      backend: { condition: service_healthy }
+    environment:
+      BACKEND_URL: http://backend:8000
+      MQTT_BROKER: broker:1883

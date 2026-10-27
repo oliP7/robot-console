@@ -1,0 +1,21 @@
+/* ---- phones: stacked rows (fixed height, still windowed) ------------------------- */
+@media (max-width: 760px) {
+  .app { gap: 10px; padding-left: max(10px, env(safe-area-inset-left)); padding-right: max(10px, env(safe-area-inset-right)); }
+  .kpi-meta { margin-left: 0; text-align: left; }
+  .kpi-num { font-size: 18px; }
+  .thead { display: none; }
+  .row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "id seen" "battery charge" "mode mode" "actions actions";
+    gap: 6px 10px; padding: 10px 12px; align-content: center;
+  }
+  .c-id { grid-area: id; }
+  .c-seen { grid-area: seen; text-align: right; }
+  .c-battery { grid-area: battery; }
+  .c-charge { grid-area: charge; text-align: right; }
+  .c-mode { grid-area: mode; }
+  .c-actions { grid-area: actions; }
+  .actions { flex-wrap: nowrap; }
+  .btn, .seg-btn { height: 32px; padding: 0 9px; }
+  .count { display: none; }
+}

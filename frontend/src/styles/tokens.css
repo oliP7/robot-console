@@ -1,0 +1,46 @@
+/* Robot Console. System fonts only: no external fonts, no CDNs. */
+
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --panel-2: #f8f8f6;
+  --ink: #16181d;
+  --ink-2: #4a4f5a;
+  --ink-3: #7a808c;
+  --line: #e1e2dd;
+  --accent: #ffd400;
+  --accent-ink: #16181d;
+  --working: #1f8a5b;
+  --idle: #5b7fa6;
+  --error: #c8372d;
+  --offline: #b9bcc3;
+  --low: #c8372d;
+  --mid: #d98e04;
+  --high: #1f8a5b;
+  --focus: #2563eb;
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1114;
+    --panel: #171a1f;
+    --panel-2: #1c2026;
+    --ink: #eceef1;
+    --ink-2: #b4bac4;
+    --ink-3: #868d99;
+    --line: #2a2f37;
+    --working: #3fbf86;
+    --idle: #7ea3cc;
+    --error: #ef5b4f;
+    --offline: #555b66;
+    --low: #ef5b4f;
+    --mid: #f0aa2a;
+    --high: #3fbf86;
+    --focus: #7aa7ff;
+    color-scheme: dark;
+  }
+}
