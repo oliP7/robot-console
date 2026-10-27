@@ -2,8 +2,12 @@
 
 Part 1 of the challenge. The local prototype (Part 2) is a deliberately small
 version of this design: every prototype module maps to a production component
-(table at the end), so the prototype is a working model of the target, not a
+(Appendix C), so the prototype is a working model of the target, not a
 throwaway.
+
+Sections 1 to 5 are the design itself (two pages). The appendices hold
+supporting detail: scale strategy backed by prototype measurements, the history
+extension, and the prototype-to-production mapping.
 
 ## 1. Requirements that shape the design
 
@@ -16,6 +20,11 @@ throwaway.
 | Non-trivial scale | Robot count and operator count scale independently, so ingest and fan-out are separate tiers. |
 
 ## 2. Architecture
+
+![Production architecture: robots, AWS IoT, ingest, live, control and history paths](architecture.png)
+
+<details>
+<summary>Diagram source (Mermaid). Re-render <code>architecture.png</code> / <code>.svg</code> after editing.</summary>
 
 ```mermaid
 flowchart LR
@@ -56,6 +65,8 @@ flowchart LR
   OPS -. sign-in .-> IDP
 ```
 
+</details>
+
 **Data path.** Robots publish to IoT Core. One IoT Rule forwards all telemetry
 into Kinesis, partitioned by robot id, which preserves per-robot ordering and
 buffers bursts (24 h retention, replayable). State workers validate each
@@ -81,10 +92,9 @@ automation.
 
 **History path.** Kinesis also feeds Firehose (Parquet in S3, partitioned by
 date and site, queried with Athena for long ranges and analytics) and a hot
-time-series store for dashboard queries over recent weeks. Note: AWS stopped
-onboarding new customers to Timestream for LiveAnalytics in 2025 as far as I
-know, so the hot store here is Timestream for InfluxDB; verify the current
-service status before committing. The History API reads hot first, then S3.
+time-series store for dashboard queries over recent weeks: Timestream for
+InfluxDB, because Timestream for LiveAnalytics has been closed to new customers
+since June 2025. The History API reads hot first, then S3.
 
 ### Stack choices
 
@@ -93,7 +103,7 @@ service status before committing. The History API reads hot first, then S3.
 | IoT Core | Managed MQTT with per-device X.509, policies, bulk device provisioning, Device Defender | Self-hosted EMQX: more control, but we would own HA, patching and cert lifecycle |
 | Kinesis between IoT and workers | Durable buffer, replay after a bug fix, ordered per robot, decouples ingest speed from broker | IoT Rule straight to Lambda: simpler, but no replay, cold starts, harder ordering |
 | Redis for latest state | Sub-millisecond reads for snapshots, pub/sub for change fan-out, atomic counters | DynamoDB: durable but higher read latency and no native fan-out |
-| Python workers and gateways first | Same code as the prototype, measured headroom (see README); hot paths can move to Go later behind the same interfaces | Go from day one: faster per core, slower to iterate |
+| Python workers and gateways first | Same code as the prototype, measured headroom; hot paths can move to Go later behind the same interfaces | Go from day one: faster per core, slower to iterate |
 | ECS Fargate | No node management, per-service scaling | EKS: worth it only if the org already runs Kubernetes |
 
 ## 3. Security, end to end
@@ -161,9 +171,13 @@ service status before committing. The History API reads hot first, then S3.
    2x the target, chaos tests (kill workers, fail over Redis).
 6. **Mobile app** on the same APIs.
 
-## 6. Scale strategy: 100 to 5,000 robots vs 5,000 to 50,000 robots
+---
 
-Measured on the prototype (README, "Performance"): one Python backend process
+# Appendices
+
+## A. Scale strategy: 100 to 5,000 robots vs 5,000 to 50,000 robots
+
+Measured on the prototype: one Python backend process
 ingested 50,000 msg/s (50,000 robots at 1 Hz) at 54% of one core with full
 delivery, and saturated at about 100,000 msg/s. At 120,000 msg/s it lost 16% of
 messages **in the broker** (not in its own inbox) and command latency p95 rose to
@@ -199,7 +213,7 @@ broadcasting everything to everyone); fix the fan-out design first. In this
 system the likely candidate is the state worker, not the gateway, because the
 gateway is dominated by network I/O.
 
-## 7. Adding history without rebuilding
+## B. Adding history without rebuilding
 
 The prototype keeps live state only. History is added beside the live path, not
 in it:
@@ -219,7 +233,7 @@ in it:
 Nothing that ships today is rebuilt: the protocol, the live store and the
 command path stay as they are.
 
-## Prototype to production mapping
+## C. Prototype to production mapping
 
 | Prototype | Production |
 |---|---|
