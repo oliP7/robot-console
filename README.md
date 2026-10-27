@@ -1,5 +1,7 @@
 # Robot Console
 
+[![ci](https://github.com/oliP7/robot-console/actions/workflows/ci.yml/badge.svg)](https://github.com/oliP7/robot-console/actions/workflows/ci.yml)
+
 Live dashboard for MQTT robots: Mosquitto, a Python (FastAPI)
 bridge, and a React + TypeScript web client. Operators see every robot's live
 state and send commands; when one operator sends a command, the robot changes
@@ -13,7 +15,9 @@ Design choices, trade-offs, the history plan and next steps are
 
 Requirements: Docker Engine with Compose v2.24+ and `make` on Linux. Nothing
 else is installed on the host; every dependency is pinned and resolved inside
-the images.
+the images. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs
+`make test`, then `make up` and a smoke test, on a native Ubuntu 24.04 host for
+every push.
 
 | What | Command |
 |---|---|
@@ -207,7 +211,8 @@ Docker Desktop, everything on one machine:
   because changes wait for the next 50 ms push slot (`FLUSH_INTERVAL`).
 - Limits of the measurement: the simulator shares a few MQTT connections
   between many robots, so this tests the backend, not Mosquitto with tens of
-  thousands of connections. It has not been run on a native Linux host.
+  thousands of connections. The load numbers are from macOS; on Linux only
+  the functional tests run (in CI), not the benchmark.
 
 ## Security (prototype)
 
