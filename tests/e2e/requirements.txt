@@ -1,0 +1,4 @@
+# Must match the Playwright base image tag in tests/e2e/Dockerfile (browsers ship with the image).
+playwright==1.63.0
+pytest==9.1.1
+httpx==0.28.1

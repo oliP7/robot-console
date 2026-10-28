@@ -33,7 +33,8 @@ test-unit:
 
 test-integration:
 	@$(TEST_COMPOSE) up --build -d --wait || { $(TEST_COMPOSE) logs --tail=50; $(TEST_COMPOSE) down -v; exit 1; }
-	@$(TEST_COMPOSE) --profile test run --rm --build integration; rc=$$?; \
+	@$(TEST_COMPOSE) --profile test run --rm --build integration \
+	  && $(TEST_COMPOSE) --profile test run --rm --build e2e; rc=$$?; \
 	  if [ $$rc -ne 0 ]; then $(TEST_COMPOSE) logs --tail=80 backend web; fi; \
 	  $(TEST_COMPOSE) --profile test down -v --remove-orphans; exit $$rc
 
