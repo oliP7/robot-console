@@ -89,7 +89,8 @@ frontend/    React + TS (Vite), own windowing, external store; nginx config
 robot/       robot.py as provided (unmodified) + its image (paho-mqtt 1.6.1)
 tests/       integration and browser (Playwright) tests, run in compose against the real stack
 tools/       robot_sim.py (many robots per connection), loadtest.py
-docs/        DESIGN.md: production design on AWS and scale strategy```
+docs/        DESIGN.md: production design on AWS and scale strategy
+```
 
 ### Code structure
 

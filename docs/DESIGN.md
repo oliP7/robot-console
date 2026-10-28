@@ -1,175 +1,117 @@
 # Robot Console: production design (AWS)
 
-Part 1 of the challenge. The local prototype (Part 2) is a deliberately small
-version of this design: every prototype module maps to a production component
-(Appendix C), so the prototype is a working model of the target, not a
-throwaway.
+Part 1 of the challenge: sections 1 to 5. Appendices: scale strategy (A), history (B),
+prototype mapping (C). Core rule: the robot is the **single source of truth**. A
+command never changes state directly; the robot's next telemetry does, and every
+client sees that.
 
-Sections 1 to 5 are the design itself (two pages). The appendices hold
-supporting detail: scale strategy backed by prototype measurements, the history
-extension, and the prototype-to-production mapping.
+## 1. Architecture
 
-## 1. Requirements that shape the design
-
-| Requirement | Design consequence |
-|---|---|
-| Live: one operator's command is visible to every client | The robot is the single source of truth. Commands never update state directly; the robot's next telemetry does, and that is fanned out to all clients. |
-| A freshly opened client renders instantly | Latest state per robot is kept in a fast store (Redis), served as a snapshot plus a live stream. |
-| Web and mobile clients | One transport (WebSocket, JSON) and one REST API for both. Per-client traffic must be bounded (mobile data, battery). |
-| Historical telemetry | A separate, append-only path. It must never slow the live path. |
-| Non-trivial scale | Robot count and operator count scale independently, so ingest and fan-out are separate tiers. |
-
-## 2. Architecture
-
-![Production architecture: robots, AWS IoT, ingest, live, control and history paths](architecture.png)
+<img src="architecture.png" alt="Production architecture: robots, AWS IoT, ingest, live, command and history paths" width="75%">
 
 <details>
 <summary>Diagram source (Mermaid). Re-render <code>architecture.png</code> / <code>.svg</code> after editing.</summary>
 
 ```mermaid
-flowchart LR
-  subgraph Field
-    R[Robots<br/>X.509 per device]
-  end
-  subgraph AWS IoT
-    IOT[IoT Core<br/>MQTT over TLS 8883<br/>per-thing policy]
-    RULE[IoT Rule<br/>robots/+/telemetry]
-  end
-  subgraph Ingest
-    KDS[(Kinesis Data Streams<br/>partition key = robot id)]
-    ING[State workers<br/>ECS Fargate]
-  end
-  subgraph Live
-    REDIS[(ElastiCache Redis<br/>latest state, counters,<br/>change channels)]
-    GW[WebSocket gateways<br/>ECS behind ALB]
-  end
-  subgraph Control
-    API[Command API<br/>ECS, REST]
-    AUDIT[(Audit log<br/>DynamoDB + S3 Object Lock)]
-  end
-  subgraph History
-    FH[Firehose] --> S3[(S3 Parquet<br/>+ Athena)]
-    TS[(Timestream for InfluxDB<br/>hot, ~30 days)]
-    HAPI[History API]
-  end
-  OPS[Web and mobile clients]
-  IDP[Cognito / corporate OIDC]
+flowchart TB
+  R["Robots<br/>X.509 per device"]
+  IOT["AWS IoT Core<br/>MQTT over TLS<br/>per-thing policy"]
+  KDS[("Kinesis Data Streams<br/>partition key = robot id")]
+  R -- "telemetry" --> IOT
+  IOT -- "IoT Rule<br/>robots/+/telemetry" --> KDS
+  IOT -- "robots/id/cmd" --> R
 
-  R -- telemetry --> IOT --> RULE --> KDS --> ING --> REDIS --> GW -- WSS --> OPS
+  subgraph LIVE["Live path"]
+    ING["State workers<br/>ECS Fargate"]
+    REDIS[("ElastiCache Redis<br/>latest state, counters,<br/>change channels")]
+    GW["WebSocket gateways<br/>ECS behind ALB"]
+    ING --> REDIS --> GW
+  end
+
+  subgraph HIST["History path"]
+    FH["Firehose"]
+    S3[("S3 Parquet + Athena")]
+    TS[("Timestream for InfluxDB<br/>hot, ~30 days")]
+    HAPI["History API"]
+    FH --> S3
+    HAPI --> TS
+    HAPI --> S3
+  end
+
+  subgraph CTRL["Command path"]
+    API["Command API<br/>ECS, REST"]
+    AUDIT[("Audit log<br/>DynamoDB + S3 Object Lock")]
+    API --> AUDIT
+  end
+
+  KDS --> ING
   KDS --> FH
   KDS --> TS
-  OPS -- HTTPS + JWT --> API -- Publish QoS1 --> IOT -- robots/id/cmd --> R
-  API --> AUDIT
-  OPS -- HTTPS --> HAPI --> TS
-  HAPI --> S3
-  OPS -. sign-in .-> IDP
+  OPS["Web and mobile clients"]
+  IDP["Cognito / corporate OIDC"]
+  GW -- "WSS" --> OPS
+  OPS -- "HTTPS + JWT" --> API
+  API -- "publish QoS 1" --> IOT
+  OPS -- "HTTPS" --> HAPI
+  OPS -. "sign-in" .-> IDP
 ```
 
 </details>
 
-**Data path.** Robots publish to IoT Core. One IoT Rule forwards all telemetry
-into Kinesis, partitioned by robot id, which preserves per-robot ordering and
-buffers bursts (24 h retention, replayable). State workers validate each
-sample, update the latest state in Redis (a hash per robot, a sorted set for the
-id index, and incremental robot counters), and publish compact change notices on
-Redis channels partitioned by robot-id hash.
+- **Ingest.** An IoT Rule forwards telemetry to Kinesis, keyed by robot id (order,
+  buffering, 24 h replay); state workers update Redis and publish change notices.
+- **Live.** Gateways send a snapshot from Redis, then only deltas for the robots a
+  client displays (latest wins) and a 1 Hz summary: traffic scales with the
+  viewport. Ingest and gateways scale independently (Appendix A).
+- **Commands.** REST `POST /robots/{id}/commands` (easy to authorise, rate-limit,
+  audit and retry): token and site scope, allowlist, rate limits, audit record,
+  publish to `robots/{id}/cmd` (QoS 1), answer `202`. Telemetry confirms it.
+- **History.** Kinesis also feeds Firehose (Parquet on S3, Athena) and Timestream
+  for InfluxDB (LiveAnalytics is closed to new customers since June 2025).
 
-**Live path.** WebSocket gateways hold client sessions. A client says which
-robots it is looking at (the visible rows); the gateway sends a snapshot from
-Redis, then only deltas for those robots, coalesced per client ("latest wins"),
-plus a 1 Hz robot summary. Per-client traffic is bounded by the viewport, not by
-robot count, which is what makes mobile viable.
+## 2. Stack choices and trade-offs
 
-**Command path.** Clients call `POST /robots/{id}/commands`. The Command API
-authenticates the JWT, authorises the operator for that robot's site, validates
-the command against an allowlist, rate-limits, writes an audit record, and
-publishes to `robots/{id}/cmd` with QoS 1 and a correlation id. It answers
-`202 Accepted` (published, not executed). The robot's next telemetry is the
-confirmation, and it reaches every client through the live path. Commands use
-REST, not the WebSocket, because REST is easy to authorise per request, rate
-limit at the edge, audit, retry idempotently (`Idempotency-Key`), and call from
-automation.
-
-**History path.** Kinesis also feeds Firehose (Parquet in S3, partitioned by
-date and site, queried with Athena for long ranges and analytics) and a hot
-time-series store for dashboard queries over recent weeks: Timestream for
-InfluxDB, because Timestream for LiveAnalytics has been closed to new customers
-since June 2025. The History API reads hot first, then S3.
-
-### Stack choices
-
-| Choice | Why | Alternative considered |
-|---|---|---|
-| IoT Core | Managed MQTT with per-device X.509, policies, bulk device provisioning, Device Defender | Self-hosted EMQX: more control, but we would own HA, patching and cert lifecycle |
-| Kinesis between IoT and workers | Durable buffer, replay after a bug fix, ordered per robot, decouples ingest speed from broker | IoT Rule straight to Lambda: simpler, but no replay, cold starts, harder ordering |
-| Redis for latest state | Sub-millisecond reads for snapshots, pub/sub for change fan-out, atomic counters | DynamoDB: durable but higher read latency and no native fan-out |
-| Python workers and gateways first | Same code as the prototype, measured headroom; hot paths can move to Go later behind the same interfaces | Go from day one: faster per core, slower to iterate |
-| ECS Fargate | No node management, per-service scaling | EKS: worth it only if the org already runs Kubernetes |
+- **IoT Core** over self-hosted EMQX: managed MQTT with per-device X.509 and
+  policies; we do not own broker HA or certificate lifecycle.
+- **Kinesis** between broker and workers, rather than IoT Rule to Lambda:
+  replay after a bug fix, per-robot ordering, no cold starts.
+- **Redis** for live state, rather than DynamoDB: sub-millisecond snapshots and
+  pub/sub fan-out; durability comes from Kinesis replay.
+- **Python on ECS Fargate first:** prototype code, measured at 50,000 msg/s on
+  about half a core; the hot loop can move to Go behind the same interfaces.
+- **Accepted for v1:** one region (RTO hours); confirmation inferred until robots echo an id.
 
 ## 3. Security, end to end
 
-- **Device identity and transport.** One X.509 certificate per robot (bulk
-  provisioning, private key in a secure element where the hardware allows), TLS
-  1.2+ to IoT Core on 8883. Certificates are rotated and can be revoked per
-  device.
-- **Broker ACLs.** IoT policy with thing-name substitution: a robot may only
-  connect with client id `${iot:Connection.Thing.ThingName}`, publish to
-  `robots/${thing}/telemetry` and subscribe to `robots/${thing}/cmd`. A
-  compromised robot cannot read or command another. Only the Command API's IAM
-  role may publish to `robots/+/cmd`. (The prototype enforces the same shape
-  with a Mosquitto ACL: anonymous robots cannot publish commands.)
-- **Operator authentication.** OIDC (Cognito federated with the corporate IdP),
-  MFA, short-lived access tokens (15 min) with refresh. Mobile uses PKCE. The
-  WebSocket authenticates with a short-lived ticket obtained over REST, never a
-  token in the URL (URLs end up in logs).
-- **Authorisation.** RBAC plus scope: viewer, operator, admin, each limited to a
-  set of sites. Enforced in the Command API (commands) and in the gateway (which
-  robot ids a client may watch). Deny by default.
-- **Command safety.** Allowlisted vocabulary and value ranges, per-operator and
-  per-robot rate limits, idempotency keys, an audit record for every attempt
-  (accepted or denied, who, what, when, from where) in append-only storage
-  (S3 Object Lock).
-- **Transport and edge.** TLS everywhere (ACM certificates), HSTS, AWS WAF on the
-  ALB (rate rules, bot control), strict CSP, Origin check on WebSocket upgrades,
-  CORS limited to known origins.
-- **Secrets and keys.** Secrets Manager with rotation, KMS encryption for
-  Kinesis, S3, Redis (in-transit and at-rest), DynamoDB. Nothing secret in
-  images, environment files or code; services read secrets at start via IAM.
-- **Network.** Services in private subnets, VPC endpoints for AWS APIs, security
-  groups allowing only the required flows. Redis has AUTH and TLS and is not
-  reachable from outside the VPC.
-- **Detection.** CloudTrail, GuardDuty, IoT Device Defender (unusual message
-  rates, auth failures), alarms on command spikes and auth failures.
-- **Supply chain.** Pinned dependencies and base images, image scanning (ECR),
-  SBOM, signed images, non-root read-only containers (as in the prototype).
+- **Devices and broker ACLs:** X.509 per robot, TLS on 8883, per-device
+  revocation. Thing-name policies: a robot only connects as itself and uses its
+  own topics; only the Command API's IAM role may publish commands.
+- **Operators:** OIDC (Cognito, corporate IdP), MFA, PKCE on mobile, WebSocket
+  ticket instead of a URL token; site-scoped roles, deny by default.
+- **Commands:** allowlist, per-operator and per-robot rate limits, idempotency
+  keys, append-only audit of every attempt (S3 Object Lock).
+- **Edge, network, secrets:** TLS everywhere, WAF, CSP, Origin checks, private
+  subnets, Secrets Manager with rotation, KMS at rest, GuardDuty, Device Defender.
 
-## 4. Failure modes considered
+## 4. Failure modes
 
-| Failure | Effect | Mitigation |
-|---|---|---|
-| Robot goes silent (no LWT in the protocol) | State looks live but is stale | Staleness timeout marks it offline; UI greys it out and disables commands. A real protocol should add an LWT and a heartbeat. |
-| Command lost or robot offline | Operator waits forever | `409` if known offline; client shows "not confirmed" after a timeout; correlation id lets the robot echo the command later (protocol change). |
-| State worker crash | Gap in live updates | Kinesis checkpointing: a replacement resumes from the last checkpoint; latest-wins state makes replays idempotent. |
-| Redis node failure | Live view degraded | Multi-AZ replication with automatic failover; gateways reconnect; state rebuilds from Kinesis within one telemetry period. |
-| Gateway crash or deploy | Clients disconnected | Clients reconnect with exponential backoff and jitter (no thundering herd), resubscribe the viewport, get a fresh snapshot. Connection draining on deploy. |
-| Slow client (mobile on poor network) | Server memory growth | Per-client pending set (latest wins) instead of a queue; send timeout drops the client, which then reconnects. |
-| Telemetry burst (all robots reconnect at once) | Ingest lag | Kinesis absorbs it; workers scale on iterator age; bounded inboxes drop the oldest sample (newest supersedes). |
-| Bad or malicious payload | Crash or poisoned state | Strict schema validation, id taken from the topic (bound by the IoT policy), size limits at the broker; invalid samples counted and dropped. |
-| Region outage | Service down | Accepted for v1 (RTO hours). Multi-region active-passive with IoT Core custom domains is a later step. |
+- **Silent robot** (no LWT): marked offline after a timeout, commands disabled.
+- **Lost command:** `409` if offline; the client shows "not confirmed".
+- **Worker or Redis failure:** Kinesis checkpoint and idempotent replay; Multi-AZ
+  Redis rebuilds within one telemetry period.
+- **Gateway restart, slow client:** jittered reconnect with a fresh snapshot; a
+  latest-wins set per client, dropped after a send timeout.
+- **Reconnect storm, bad payload:** Kinesis absorbs bursts; schema validation and
+  the id from the policy-bound topic.
 
 ## 5. Build order
 
-1. **Thin vertical slice** (the prototype, then on AWS): IoT Core with device
-   certs and policies, one state worker, Redis, one gateway, the command API,
-   the web client. This proves the full loop and the security model early.
-2. **Auth for real:** OIDC, RBAC with site scopes, audit store.
-3. **Observability:** metrics (ingest rate, iterator age, loop lag, command
-   round trip), traces with the command correlation id, dashboards and alarms.
-4. **History:** Firehose to S3 first (cheap, captures everything from day one),
-   then the hot store and the History API, then charts in the client.
-5. **Scale and resilience:** horizontal gateways, sharded workers, load tests at
-   2x the target, chaos tests (kill workers, fail over Redis).
-6. **Mobile app** on the same APIs.
+**1. Vertical slice** (IoT Core with certificates, one worker, Redis, one gateway,
+Command API, web client) to prove the loop and the security model. **2. Real
+auth** (OIDC, site roles, audit). **3. Observability** (ingest rate, iterator age,
+command round trip). **4. History** (Firehose to S3 from day one, then the hot
+store and charts). **5. Scale and resilience** (load and chaos tests). **6. Mobile
+app** on the same APIs.
 
 ---
 
